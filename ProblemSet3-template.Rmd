@@ -1,0 +1,174 @@
+---
+title: "Predicting the Popular Vote of the 2020 US Federal Election (of voters who exclusively vote for either Joe Biden or Donald Trump)"
+author: "Colin Babineau (1003799482)"
+date: "November 2nd, 2020"
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+library(tidyverse)
+setwd("C:/users/colin/Desktop/ps3")
+# Loading in the cleaned survey Data
+survey_data <- read_csv("election_survey.csv")
+
+# Loading in the cleaned census Data
+census_data <- read_csv("census_data.csv")
+
+```
+### Code and data supporting this report available at: https://github.com/colinbabineau/STA304PS3
+
+# Model
+
+The goal of the model that we are using is to predict the popular vote of the 2020 American federal election (Dassonneville, 2020), specifically, I am isolating to predict votes that will go exclusively to either Joe Biden or Donald Trump (so bear that in mind, the percentage of votes is expected to be proportionate but not add up to exactly 100% in the actual election). To predict this outcome, I will be using a logistic regression model and will be implementing a post-stratification calculation to adjust for US demographics of age, sex, race, and state. The following sub-sections will further explore the model specifics and post-stratification calculation method. Data for the model was taken from the IPUMS 2018 5-year ACS to post-stratify (Ruggles et al., 2020) and Democracy Fund + UCLA Nationscape's dataset from the week of June 25, 2020 (Nationscape, 2020).
+
+## Model Specifics
+
+I used R to construct a logistic regression model to model the proportion of votes that will go to either Joe Biden or Donald Trump. Specifically, it will be predicting the proportion that will go to Joe Biden, and Donald Trump's proportion will be calculated by taking 1 - (the predicted result). A logistic regression model will be used as we are predicting a binary outcome, as well as this model being an effective yet simplistic model. This model is easy to interpret while still being an effective model. In addition, diagnostics will later reveal that there are no obvious model violations using binned residuals, indicating that the model is an appropriate choice.  The logistic model is represented by:
+
+$$ log(p/1-p) = \beta_0+\beta_1  x_{age} + \beta_2 x_{sex male} + \beta_3 x_{bluestate} + \beta_4 x_{iswhite} + \epsilon$$
+
+Where $p$ represents the proportion of voters who will vote for Joe Biden (of those who vote for either Joe Biden or Donald Trump). $\beta_0$ represents the intercept of the model, and is the probability of voting for Joe Biden for someone at age 1, female, not in a blue state, and isn't white. Additionally, $\beta_1$ represents the log odds that change for each unit increase in age, $\beta_2$ represents the log odds that change if the individual is male, $\beta_3$ represents the log odds that change if the individual resides in a blue state, and $\beta_4$ represents the log odds that change if the individual is white.
+
+```{r, include=FALSE}
+
+# Creating the Model
+model <- glm(vote_biden ~ 
+         age +
+         sex_male + 
+         blue_state +
+         is_white,
+         data=survey_data,
+         family = "binomial")
+
+```
+
+## Post-Stratification 
+
+In order to estimate the proportion of voters who will vote for Joe Biden, I need to perform a post-stratification analysis. Here I create cells based off different ages, sexes, blue states and non-blue states, and white people and non-white people. Using the model described in the previous sub-section, I will estimate the proportion of voters in each age, sex, state, and race bin. I will then weight each proportion estimate (within each bin) by the respective population size of that bin and sum those values and divide that by the entire population size. This will help adjust the prediction of the popular vote by weighting the categories to be representative of the US population. 
+
+```{r, include=FALSE}
+
+# Here I will perform the post-stratification calculation
+census_data$estimate <-
+  model %>%
+  predict(newdata = census_data)
+
+census_data <-
+  census_data %>%
+  mutate(alp_predict_prop = estimate*n)
+
+log_pred <- sum(census_data$alp_predict_prop)/sum(census_data$n)
+
+prediction <- exp(log_pred)/(1 + exp(log_pred))
+```
+
+The variables used to predict the proportion of votes going to Joe Biden are age, sex (whether or not they're male), whether or not they live in state that consistently votes Democrat (blue_state), and whether or not the individual is white (is_white). These variables were chosen as they are simple but representative of influence on which candidate will be voted for. Research has shown that men, white people, and older people are generally more likely to vote for Donald Trump (Gramlich, 2020), so they are appropriate categories. Also, blue_state was chosen as it is much simpler (easier to interpret) and practical (it's a binary variable) than individually using each state, but still gives an accurate prediction as it includes all states that consistently vote Democrat (Čirjak, 2020).
+
+## Additional considerations about data use
+
+To ensure that these variables worked in both the survey data and post-stratification data, I removed age = 0 and age = 90 as they were not represented as numerical values. In addition, sex_male, blue_state, and is_white had to be created from existing data in both datasets to be transformed into binary variables with the same variable name so that they would be compatible both in the model and for post-stratification.
+
+# Results
+```{r}
+broom::tidy(model)
+```
+$$ Table 1 $$
+
+```{r, include=FALSE}
+#install.packages("arm")
+library(arm)
+```
+
+```{r}
+
+binnedplot(fitted(model), 
+           residuals(model, type = "response"), 
+           nclass = NULL, 
+           xlab = "Expected Values", 
+           ylab = "Average residual", 
+           main = "Binned residual plot", 
+           cex.pts = 0.8, 
+           col.pts = 1, 
+           col.int = "gray")
+
+```
+
+$$ Plot 1 $$
+
+```{r}
+df <- data.frame(Candidate=c("Joe Biden", "Donald Trump"),
+                Popular_Vote=c(prediction, (1-prediction)))
+```
+
+```{r, include = FALSE}
+library(ggplot2)
+```
+
+```{r}
+
+ggplot(data=df, aes(x=Candidate, y=Popular_Vote)) +
+  geom_bar(stat="identity")
+```
+$$ Plot 2 $$
+
+```{r}
+head(df)
+```
+
+$$ Table 2 $$
+
+Table 1 presents a summary of the logistic model. We also see a binned residual plot for logistic regression diagnostics (Plot 1), showing where we would expect to contain 95% of the observations (Modify axis, legend, and plot labels - labs., n.d.). In addition, Plot 2 is a bar plot showing the proportion of votes that we predict will go to Donald Trump and Joe Biden (of those who exclusively vote for one of the two candidates) after post-stratification had been applied (Ggplot2 barplots : Quick start guide - R software and data visualization, n.d.) Table 2 is also presented showcasing the specific predicted values of the proportion of the popular vote each candidate receives. 
+
+Plot 2 showcases the results after post-stratifying and Table 2 shows the specific values, showing that we predict the popular vote to be 0.5363538 (~53.6%) for Joe Biden and 0.4636462 (~46.4%) for Donald Trump after using the logistic regression model and post-stratifying our data, which accounted for the variables used in the model of age, sex_male, is_white, and blue_state.
+
+# Discussion
+
+### Summary
+
+The ultimate goal of this analysis is to predict the proportion of votes that will go to Joe Biden and Donald Trump in the 2020 federal election (of those who vote exclusively for the two candidates discussed). As previously mentioned, I used a logistic regression model and implemented a post-stratification calculation to adjust for US demographics. The data that was used came from the IPUMS 2018 5-year ACS to post-stratify (Ruggles et al., 2020) and Democracy Fund + UCLA Nationscape's dataset from the week of June 25, 2020 to model (Nationscape, 2020). There may be some bias from the survey data, however, as some people may not be comfortable sharing a particular political view depending on who they support, possibly leading to some slightly skewed values. This is also from only one week in June 2020, so anything that was going on that week may have influenced some answers that may be different upon election day (or other weeks). In addition, any respondent that indicated they weren't voting for either Trump or Biden was excluded. 
+
+### Conclusions
+
+Based off the estimated proportion of voters (of those voting exclusively for Trump or Biden), we predict the popular vote to be 0.5363538 (~53.6%) for Joe Biden and 0.4636462 (~46.4%) for Donald Trump. This is after using the logistic regression model and post-stratifying our data, which accounted for the variables used in the model of age, sex_male, is_white, and blue_state. It should be noted as well, however, that although this may be an accurate prediction for the proportion of votes received, it is not an indication of who will win the election, as the winner of the election could lose the popular vote but win the electoral college vote (Gramlich, 2020).
+
+Additionally, nothing seems violated in terms of logistic regression properties. The p-values are very significant in the summary table (Table 1) for each coefficient (essentially zero), indicating that these results are most likely not by chance alone. Additionally, the binned residual plot (Plot 1) show no obvious violations of this model. The average residuals hover around 0 with relatively constant variance. They also almost all fall within the grey bands which is where we would expect to contain 95% of the observations (Webb, 2017). This indicates that the model used is most likely reliable for prediction.
+
+## Weaknesses
+
+One weakness of this analysis is that it uses a relatively simple logistic model with simple variables, that although may be accurate, sacrifice some nuance in simplification. For example, although I could have used every state in the regression model to give a slightly more accurate prediction, I opted for using blue states and non-blue states instead in order to capture significant amount of the nuance of how states vote while keeping the model simpler and easier to interpret. 
+
+In addition, I removed any data in the survey data that did not indicate that they were voting for either Donald Trump or Joe Biden, that although allow for a clear indication of who will earn more votes between the two candidates, may allow for the misinterpretation that every voter will vote for only these two candidates.
+
+## Next Steps
+
+For next steps, it may be wise to compare these results with the actual proportion of votes that go to Joe Biden and Donald Trump after the election has occurred. A survey could then be conducted for a later analysis that may help discover where more improvements could be made.
+
+Additionally, more analyses could be conducted, either using the same survey data with additional variables, or new survey data with the same variables in order to see if we are consistently getting similar predictions with the post-stratification process. These also could be compared to see which analysis comes closest to the actual election results. 
+
+### Concluding Remarks
+
+After conducting constructing a logistic regression model and post-stratifying, it appears that Joe Biden will receive the popular vote of the votes cast exclusively for either Biden or Trump, with predicted values of ~53.6% for Biden and ~46.4% for Trump. It should once more just be noted, however, that even if Biden receives the popular vote, this does not guarantee victory. A candidate can lose the popular vote and still win the electoral college which would earn them the presidency.
+
+
+# References
+
+Čirjak, A. (2020, June 16). States That Have Consistently Remained Democratic. Retrieved October 28, 2020, from https://www.worldatlas.com/articles/states-that-have-consistently-remained-democratic.html
+
+Dassonneville, R., & Tien, C. (2020). Introduction to Forecasting the 2020 US Elections. PS: Political Science & Politics, 1-5. doi:10.1017/S104909652000147X
+
+Ggplot2 barplots : Quick start guide - R software and data visualization. (n.d.). Retrieved October 28, 2020, from http://www.sthda.com/english/wiki/ggplot2-barplots-quick-start-guide-r-software-and-data-visualization
+
+Gramlich, J. (2020, October 26). What the 2020 electorate looks like by party, race and ethnicity, age, education and religion. Retrieved October 28, 2020, from https://www.pewresearch.org/fact-tank/2020/10/26/what-the-2020-electorate-looks-like-by-party-race-and-ethnicity-age-education-and-religion/
+
+Modify axis, legend, and plot labels - labs. (n.d.). Retrieved October 12, 2020, from https://ggplot2.tidyverse.org/reference/labs.html
+
+Nationscape, U. (2020, October 23). New: Second Nationscape Data Set Release. Retrieved October 28, 2020, from https://www.voterstudygroup.org/publication/nationscape-data-set
+
+Steven Ruggles, Sarah Flood, Ronald Goeken, Josiah Grover, Erin Meyer, Jose Pacas and Matthew Sobek. IPUMS USA: Version 10.0 [IPUMS 2018 5-year ACS]. Minneapolis, MN: IPUMS, 2020. https://doi.org/10.18128/D010.V10.0
+
+Webb, J. (2017, September 03). Course Notes for IS 6489, Statistics and Predictive Analytics. Retrieved October 12, 2020, from
+https://bookdown.org/jefftemplewebb/IS-6489/logistic-regression.html#assessing-logistic-model-fit
